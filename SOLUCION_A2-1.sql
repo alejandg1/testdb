@@ -1,5 +1,6 @@
+USE MASTER
 CREATE DATABASE TIENDA_MASCOTAS
-USE TIENDA_MASCOTAS
+USE TIENDA_MASCOTAS;
 
 CREATE TABLE TIENDA
 (
@@ -8,19 +9,19 @@ CREATE TABLE TIENDA
   TELEFONO VARCHAR(10),
   DIRECCION VARCHAR(100),
   EMAIL VARCHAR(50) 
-)
+);
 
 CREATE TABLE RAZA
 (
   IDRAZA INT PRIMARY KEY,
   NOMBRE VARCHAR(100) UNIQUE
-)
+);
 
 CREATE TABLE TIPO
 (
   IDTIPO INT PRIMARY KEY,
   NOMBRE VARCHAR(100) UNIQUE
-)
+);
 
 CREATE TABLE ANIMAL
 (
@@ -30,7 +31,7 @@ CREATE TABLE ANIMAL
   DETALLES VARCHAR(500) NULL,
   PRECIO REAL DEFAULT 0.00,
   ESTADO VARCHAR(50) DEFAULT 'DISPONIBLE'
-)
+);
 
 CREATE TABLE CLIENTE
 (
@@ -40,7 +41,7 @@ CREATE TABLE CLIENTE
   TELEFONO VARCHAR(10),
   FECHA_NAC DATE DEFAULT GETDATE(),
   GENERO INT DEFAULT 1,
-)
+);
 
 CREATE TABLE VENTA
 (
@@ -52,7 +53,7 @@ CREATE TABLE VENTA
   IVA REAL DEFAULT 0.00,
   DSCTO REAL DEFAULT 0.00,
   TOTAL REAL DEFAULT 0.00
-)
+);
 
 CREATE TABLE VENTADETALLE
 (
@@ -60,7 +61,7 @@ CREATE TABLE VENTADETALLE
   IDVENTA INT REFERENCES VENTA(IDVENTA),
   IDANIMAL INT REFERENCES ANIMAL(IDANIMAL),
   SUBTOTAL REAL DEFAULT 0.00
-)
+);
 
 -- Procedimiento almacenado
 -- Crear un procedimiento almacenado para poder crear una venta con detalles aleatorios,se debe tomar en cuenta lo siguiente.
@@ -71,13 +72,75 @@ CREATE TABLE VENTADETALLE
 --     5. Debe aplicar BEGIN, COMMIT, ROLLBACK y el empleo del TRY y CATCH.
 --     6. La fecha va aumentando de 1 día en 1.
 -- Cursor
--- En el mismo procedimiento almacenado crear un cursor que me permita insertar el detalle de los venta los registros de animales de forma aleatoria tomando en cuenta lo siguiente.
+-- En el mismo procedimiento almacenado crear un cursor que me permita insertar el detalle de los venta los 
+-- registros de animales de forma aleatoria tomando en cuenta lo siguiente.
 --     1. La cantidad de registros a insertar en el detalle será un número aleatorio entre 1 a 3.
 --     2. Los animales a insertar debe ser de forma aleatoria y solo los que tengan estado disponible.
 --     3. La cantidad en el registro de VENTADETALLE siempre será de 1.
 --     4. Se debe calcular los totales tanto del VENTADETALLE y VENTA por cada iteración del cursor.
 --     5. Si la edad está entre 40 a 50 años entonces se le otorgará un descuento del 40% en la venta.
 
+create procedure SP_InsVent(@reg_date date)
+as
+begin
+	begin try
+		declare cur_cli cursor for 
+		(select idcliente,DATEDIFF(YEAR,GETDATE(),fecha_nac) from cliente where DATEDIFF(YEAR,GETDATE(),fecha_nac)>18)
+		open cur_cli
+		declare @idcli int, @idvent int, @idtiend int,
+				@edad int,@precio real,@desc real = 0.00,
+				@dets int,@idanim int,
+				@iva real = 0.00,@subt real,@total real
+		fetch cur_cli into @idcli,@edad
+		begin tran
+		while @@fetch_status=0
+			begin
+				set @idtiend = (select top 1 idtienda from tienda order by newid())
+				set @idvent = (select isnull(max(idventa+1),1) from venta)
+				insert venta(idventa,idcliente,idtienda,fecha_registro) values(@idvent,@idcli,@idtiend,@reg_date)
+				set @dets =floor( RAND()*(3-1)+1 )
+				declare cur_anim cursor 
+				for (select top (@dets) idanimal, precio from animal where estado='DISPONIBLE')
+				open cur_anim
+				fetch cur_anim into @idanim,@precio
+				while @@fetch_status=0
+					begin
+						insert into ventadetalle values(@idvent,@idanim,@precio)
+						fetch cur_anim into @idanim,@precio
+					end
+				close cur_anim
+				deallocate cur_anim
+				if @edad between 40 and 50
+				BEGIN 
+					set @desc = 0.40
+				END
+				select @subt= sum(subtotal) from ventadetalle where idventa = @idvent
+				set @desc = @subt*@desc
+				set @iva = @subt*0.12
+				set @total = @subt - @desc + @iva
+				update venta
+					set subtotal = @subt,
+					iva=@iva,
+					dscto=@desc,
+					total=@total
+				where idventa = @idvent
+				select @reg_date = DATEADD(DAY,1,@reg_date) 
+				fetch cur_cli into @idcli,@edad
+			end
+		close cur_cli
+		deallocate cur_cli
+		commit tran
+	end try
+	begin catch
+		rollback tran
+		deallocate cur_cli
+		deallocate cur_anim
+		print error_message()
+	end catch
+end;
+
+
+/*
 CREATE OR ALTER PROCEDURE SP_VENTA
 @FECHA_REGISTRO DATE
 AS
@@ -132,15 +195,16 @@ BEGIN CATCH
   ROLLBACK TRANSACTION
   SELECT ERROR_MESSAGE()
 END CATCH
-
+*/
 -- Trigger
 -- Crear un trigger para cuando se inserte un animal en el VENTADETALLE actualizar el estado del animal a vendido.
-
-CREATE OR ALTER TRIGGER TR_VENTADETALLE
-ON VENTADETALLE AFTER INSERT
-AS
-BEGIN
-     DECLARE @IDANIMAL INT
-     SELECT @IDANIMAL = IDANIMAL FROM INSERTED
-     UPDATE ANIMAL SET ESTADO = 'VENDIDO' WHERE IDANIMAL = @IDANIMAL
-END
+create trigger tr_updAni 
+on ventadetalle AFTER insert 
+as
+begin
+	declare @idan int 
+	set @idan = (select idanimal from inserted)
+	update animal
+	set estado = 'VENDIDO'
+	where idanimal = @idan
+end

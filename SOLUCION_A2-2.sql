@@ -123,12 +123,13 @@ END CATCH
 
 -- Trigger
 -- Crear un trigger para actualizar el estado de un vehículo cuando haya sido insertado un registro en la tabla VENTADETALLE para identificar los carros alquilados.
-
-CREATE OR ALTER TRIGGER TR_VENTADETALLE
-ON VENTADETALLE AFTER INSERT
-AS
-BEGIN
-     DECLARE @IDAUTO INT
-     SELECT @IDAUTO = IDAUTO FROM INSERTED
-     UPDATE AUTO SET ESTADO = 'ALQUILADO' WHERE IDAUTO = @IDAUTO
-END
+create trigger tr_ventDet
+on ventadetalle after insert 
+as
+begin
+	declare @idauto int 
+	set @idauto = (select idauto from inserted)
+	update auto
+		set estado ='ALQUILADO'
+	where idauto = @idauto
+end
